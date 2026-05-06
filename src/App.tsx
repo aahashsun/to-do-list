@@ -19,6 +19,17 @@ const NOTE_SIZE_PRESETS = [
   { label: "Large", w: 250, h: 215 },
 ] as const;
 
+const NOTE_W_MIN = 100;
+const NOTE_W_MAX = 720;
+const NOTE_H_MIN = 90;
+const NOTE_H_MAX = 560;
+
+function clampNoteDims(wIn: number, hIn: number): { w: number; h: number } {
+  const w = Math.round(Math.min(NOTE_W_MAX, Math.max(NOTE_W_MIN, wIn)));
+  const h = Math.round(Math.min(NOTE_H_MAX, Math.max(NOTE_H_MIN, hIn)));
+  return { w, h };
+}
+
 /**
  * Shared world plane (px) for wallpaper + SVG. Same coordinate space as note `left/top`.
  * Extremely large roam; not mathematically ∞ to stay within practical browser limits.
@@ -91,6 +102,84 @@ function noteSnippet(note: Note): string {
   const t = note.text.trim().replace(/\s+/g, " ");
   if (!t) return "(empty note)";
   return t.length > 48 ? `${t.slice(0, 46)}…` : t;
+}
+
+function NoteCustomSizeFields({
+  noteId,
+  widthInit,
+  heightInit,
+  onApply,
+}: {
+  noteId: string;
+  widthInit: number;
+  heightInit: number;
+  onApply: (w: number, h: number) => void;
+}) {
+  const [wDraft, setWDraft] = useState(String(widthInit));
+  const [hDraft, setHDraft] = useState(String(heightInit));
+  useEffect(() => {
+    setWDraft(String(widthInit));
+    setHDraft(String(heightInit));
+  }, [noteId, widthInit, heightInit]);
+
+  const applyCustom = () => {
+    const w = Number.parseInt(wDraft.trim(), 10);
+    const h = Number.parseInt(hDraft.trim(), 10);
+    if (!Number.isFinite(w) || !Number.isFinite(h)) return;
+    const clamped = clampNoteDims(w, h);
+    onApply(clamped.w, clamped.h);
+    setWDraft(String(clamped.w));
+    setHDraft(String(clamped.h));
+  };
+
+  return (
+    <div className="board-context-menu__custom-size" role="group" aria-label="Custom note size">
+      <div className="board-context-menu__custom-size-row">
+        <label className="board-context-menu__dim-label">
+          W
+          <input
+            type="number"
+            inputMode="numeric"
+            min={NOTE_W_MIN}
+            max={NOTE_W_MAX}
+            className="board-context-menu__dim-input"
+            value={wDraft}
+            onChange={(e) => setWDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                applyCustom();
+              }
+            }}
+          />
+        </label>
+        <label className="board-context-menu__dim-label">
+          H
+          <input
+            type="number"
+            inputMode="numeric"
+            min={NOTE_H_MIN}
+            max={NOTE_H_MAX}
+            className="board-context-menu__dim-input"
+            value={hDraft}
+            onChange={(e) => setHDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                applyCustom();
+              }
+            }}
+          />
+        </label>
+      </div>
+      <button type="button" className="board-context-menu__apply-size" onClick={applyCustom}>
+        Apply custom size
+      </button>
+      <p className="board-context-menu__dim-hint">
+        {NOTE_W_MIN}–{NOTE_W_MAX} × {NOTE_H_MIN}–{NOTE_H_MAX} px (clamped automatically)
+      </p>
+    </div>
+  );
 }
 
 /** Reads embedded tags when available; falls back to "Artist - Title" from the filename. */
@@ -297,6 +386,9 @@ export default function App() {
   /** Where the dragged note sat on the board when this drag began (used when trashing → restore goes back here). */
   const noteDragAnchorRef = useRef<{ noteId: string; x: number; y: number } | null>(null);
   const [trashDropHighlight, setTrashDropHighlight] = useState(false);
+  /** Resize from bottom-right corner: anchor is note top-left in board coords. */
+  const noteResizeRef = useRef<{ noteId: string; ox: number; oy: number } | null>(null);
+  const [resizeActiveNoteId, setResizeActiveNoteId] = useState<string | null>(null);
 
   const [connectFrom, setConnectFrom] = useState<string | null>(null);
   const [wirePreview, setWirePreview] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(
@@ -605,6 +697,36 @@ export default function App() {
     }
     draggingNoteIdRef.current = null;
     setDraggingId(null);
+  };
+
+  const startNoteResize = (e: React.PointerEvent, note: Note) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    noteResizeRef.current = { noteId: note.id, ox: note.x, oy: note.y };
+    setResizeActiveNoteId(note.id);
+  };
+
+  const onNoteResizePointerMove = (e: React.PointerEvent) => {
+    const r = noteResizeRef.current;
+    if (!r) return;
+    const p = boardPoint(e.clientX, e.clientY);
+    const next = clampNoteDims(p.x - r.ox, p.y - r.oy);
+    setNotes((prev) =>
+      prev.map((n) => (n.id === r.noteId ? { ...n, width: next.w, height: next.h } : n)),
+    );
+  };
+
+  const endNoteResize = (e: React.PointerEvent) => {
+    if (!noteResizeRef.current) return;
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+    noteResizeRef.current = null;
+    setResizeActiveNoteId(null);
   };
 
   const startConnect = (e: React.PointerEvent, note: Note) => {
@@ -1048,7 +1170,7 @@ export default function App() {
             return (
           <article
             key={note.id}
-            className={`note${note.taskDone ? " note--done" : ""}${note.timerRinging ? " note--timer-ringing" : ""}`}
+            className={`note${note.taskDone ? " note--done" : ""}${note.timerRinging ? " note--timer-ringing" : ""}${resizeActiveNoteId === note.id ? " note--resizing" : ""}`}
             data-note-id={note.id}
             style={{
               left: note.x,
@@ -1056,7 +1178,7 @@ export default function App() {
               width: nb.w,
               minHeight: nb.h,
               backgroundColor: notePalette[note.colorIndex % notePalette.length],
-              zIndex: draggingId === note.id ? 20 : 10,
+              zIndex: draggingId === note.id || resizeActiveNoteId === note.id ? 22 : 10,
               transform: `rotate(${idx % 2 === 0 ? -0.8 : 0.6}deg)`,
             }}
           >
@@ -1110,6 +1232,16 @@ export default function App() {
               onPointerMove={onConnectPointerMove}
               onPointerUp={endConnect}
               onPointerCancel={endConnect}
+            />
+            <button
+              type="button"
+              className="note-resize-handle"
+              title="Drag corner to resize"
+              aria-label="Resize note"
+              onPointerDown={(e) => startNoteResize(e, note)}
+              onPointerMove={(e) => onNoteResizePointerMove(e)}
+              onPointerUp={(e) => endNoteResize(e)}
+              onPointerCancel={(e) => endNoteResize(e)}
             />
           </article>
             );
@@ -1539,8 +1671,9 @@ export default function App() {
                       role="menuitem"
                       className={`board-context-menu__size-btn${matches ? " is-current" : ""}`}
                       onClick={() => {
+                        const { w, h } = clampNoteDims(p.w, p.h);
                         setNotes((prev) =>
-                          prev.map((n) => (n.id === cn.id ? { ...n, width: p.w, height: p.h } : n)),
+                          prev.map((n) => (n.id === cn.id ? { ...n, width: w, height: h } : n)),
                         );
                         setContextMenu(null);
                       }}
@@ -1550,6 +1683,17 @@ export default function App() {
                   );
                 })}
               </div>
+
+              <NoteCustomSizeFields
+                noteId={cn.id}
+                widthInit={noteBox(cn).w}
+                heightInit={noteBox(cn).h}
+                onApply={(w, h) => {
+                  setNotes((prev) =>
+                    prev.map((n) => (n.id === cn.id ? { ...n, width: w, height: h } : n)),
+                  );
+                }}
+              />
 
               <button
                 type="button"

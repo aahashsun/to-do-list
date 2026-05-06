@@ -594,6 +594,15 @@
     0 4px 0 rgba(0, 0, 0, 0.06) inset;
 }
 
+.note--resizing {
+  transition: none;
+  box-shadow:
+    0 16px 32px rgba(0, 0, 0, 0.3),
+    0 4px 0 rgba(0, 0, 0, 0.06) inset,
+    0 0 0 1px rgba(255, 200, 120, 0.35);
+  user-select: none;
+}
+
 .note--done .note-body {
   text-decoration: line-through;
   text-decoration-thickness: 1.5px;
@@ -705,7 +714,7 @@
 
 .note-body {
   flex: 1;
-  resize: vertical;
+  resize: none;
   min-height: 88px;
   border: none;
   background: transparent;
@@ -741,6 +750,41 @@
 
 .eyelet:hover {
   filter: brightness(1.06);
+}
+
+.note-resize-handle {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: 0 0 5px 0;
+  cursor: nwse-resize;
+  touch-action: none;
+  z-index: 28;
+  background: linear-gradient(
+    145deg,
+    transparent 52%,
+    rgba(255, 255, 255, 0.5) 52%,
+    rgba(180, 180, 180, 0.55) 100%
+  );
+  box-shadow: inset 1px -1px 0 rgba(0, 0, 0, 0.12);
+}
+
+.note-resize-handle:hover {
+  background: linear-gradient(
+    145deg,
+    transparent 48%,
+    rgba(255, 230, 180, 0.65) 48%,
+    rgba(210, 180, 130, 0.75) 100%
+  );
+}
+
+.note-resize-handle:active {
+  filter: brightness(0.94);
 }
 
 .modal-backdrop.timer-dialog-backdrop {
@@ -1001,8 +1045,8 @@
 }
 
 .board-context-menu {
-  min-width: 220px;
-  max-width: min(300px, calc(100vw - 16px));
+  min-width: 228px;
+  max-width: min(340px, calc(100vw - 16px));
   padding: 6px 0;
   margin: 0;
   border-radius: 12px;
@@ -1103,6 +1147,75 @@
 .board-context-menu__size-btn.is-current {
   border-color: rgba(255, 215, 150, 0.55);
   background: rgba(255, 200, 120, 0.12);
+}
+
+.board-context-menu__custom-size {
+  padding: 6px 14px 10px;
+}
+
+.board-context-menu__custom-size-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.board-context-menu__dim-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  opacity: 0.62;
+}
+
+.board-context-menu__dim-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.35);
+  color: #f2f4fa;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.board-context-menu__dim-input:focus {
+  outline: 2px solid rgba(255, 200, 120, 0.55);
+  outline-offset: 1px;
+}
+
+.board-context-menu__apply-size {
+  display: flex;
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 12px;
+  justify-content: center;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.09);
+  color: inherit;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.board-context-menu__apply-size:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.board-context-menu__dim-hint {
+  margin: 8px 0 0;
+  font-size: 0.65rem;
+  opacity: 0.45;
+  line-height: 1.35;
 }
 
 .board-context-menu__link-list {
