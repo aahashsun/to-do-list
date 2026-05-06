@@ -224,7 +224,7 @@ function useLocalClockParts() {
 
 export default function App() {
   const boardRef = useRef<HTMLDivElement>(null);
-  const trashRef = useRef<HTMLDivElement>(null);
+  const trashRef = useRef<HTMLButtonElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bgImageInputRef = useRef<HTMLInputElement>(null);
@@ -266,7 +266,12 @@ export default function App() {
   const [trashModalOpen, setTrashModalOpen] = useState(false);
 
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  /** Synced immediately on drag start/end so pointer-move sees latest id without waiting for render. */
+  const draggingNoteIdRef = useRef<string | null>(null);
   const dragOffset = useRef({ dx: 0, dy: 0 });
+  /** Where the dragged note sat on the board when this drag began (used when trashing → restore goes back here). */
+  const noteDragAnchorRef = useRef<{ noteId: string; x: number; y: number } | null>(null);
+  const [trashDropHighlight, setTrashDropHighlight] = useState(false);
 
   const [connectFrom, setConnectFrom] = useState<string | null>(null);
   const [wirePreview, setWirePreview] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(
@@ -516,12 +521,16 @@ export default function App() {
     if (e.button !== 0) return;
     e.currentTarget.setPointerCapture(e.pointerId);
     const p = boardPoint(e.clientX, e.clientY);
+    draggingNoteIdRef.current = note.id;
     dragOffset.current = { dx: p.x - note.x, dy: p.y - note.y };
+    noteDragAnchorRef.current = { noteId: note.id, x: note.x, y: note.y };
     setDraggingId(note.id);
+    setTrashDropHighlight(false);
   };
 
   const onNotePointerMove = (e: React.PointerEvent, note: Note) => {
-    if (draggingId !== note.id) return;
+    if (draggingNoteIdRef.current !== note.id) return;
+    setTrashDropHighlight(isOverTrash(e.clientX, e.clientY));
     const p = boardPoint(e.clientX, e.clientY);
     setNotes((prev) =>
       prev.map((n) =>
@@ -533,25 +542,34 @@ export default function App() {
   };
 
   const endDragNote = (e: React.PointerEvent, note: Note) => {
-    if (draggingId !== note.id) return;
+    if (draggingNoteIdRef.current !== note.id) return;
     try {
       e.currentTarget.releasePointerCapture(e.pointerId);
     } catch {
       /* ignore */
     }
+    const anchor =
+      noteDragAnchorRef.current?.noteId === note.id ? noteDragAnchorRef.current : null;
+    if (noteDragAnchorRef.current?.noteId === note.id) noteDragAnchorRef.current = null;
+    setTrashDropHighlight(false);
     if (isOverTrash(e.clientX, e.clientY)) {
       stopBell(note.id);
+      const x = anchor?.x ?? note.x;
+      const y = anchor?.y ?? note.y;
       setNotes((prev) => prev.filter((n) => n.id !== note.id));
       setConnections((prev) => prev.filter((c) => c.fromId !== note.id && c.toId !== note.id));
       setTrashedNotes((prev) => [
         ...prev,
         {
           ...note,
+          x,
+          y,
           timerEndMs: null,
           timerRinging: false,
         },
       ]);
     }
+    draggingNoteIdRef.current = null;
     setDraggingId(null);
   };
 
@@ -1324,20 +1342,19 @@ export default function App() {
         </div>
       )}
 
-      <div
+      <button
+        type="button"
         ref={trashRef}
-        className="trash-bin"
-        title="Drop notes here to remove. Double-click to open trash."
-        onDoubleClick={(e) => {
-          e.preventDefault();
-          setTrashModalOpen(true);
-        }}
+        className={`trash-bin${trashDropHighlight ? " trash-bin--drop-target" : ""}`}
+        title="Tap to open trash. Drag a note onto the bin to remove it (recoverable)."
+        aria-label="Trash — tap to review removed notes, or drop a note on the bin"
+        onClick={() => setTrashModalOpen(true)}
       >
         <span className="trash-icon" aria-hidden>
           🗑
         </span>
         <span className="trash-label">Trash</span>
-      </div>
+      </button>
 
       {trashModalOpen && (
         <div
@@ -1351,7 +1368,7 @@ export default function App() {
         >
           <div className="modal">
             <h2 id="trash-title">Trash</h2>
-            <p className="modal-hint">Drag notes onto the bin to move them here. Restore or delete forever.</p>
+            <p className="modal-hint">Drag notes onto the bin to move them here. Restore puts them where they were before you dragged toward trash.</p>
             <ul className="trash-list">
               {trashedNotes.length === 0 ? (
                 <li className="muted">The trash is empty.</li>
