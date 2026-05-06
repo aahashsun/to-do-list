@@ -5,7 +5,8 @@ import "./App.css";
 
 const NOTE_W = 200;
 const NOTE_H = 140;
-const NOTE_COLORS = [
+
+export const DEFAULT_NOTE_PALETTE = [
   "#fff59d",
   "#ffab91",
   "#aed581",
@@ -14,7 +15,12 @@ const NOTE_COLORS = [
   "#ffe082",
   "#f48fb1",
   "#bcaaa4",
-];
+] as const;
+
+const DEFAULT_WIRE_STROKE = "#f6edd6";
+const DEFAULT_WIRE_PREVIEW = "#ffe9a8";
+
+const MIN_PALETTE_SIZE = 3;
 
 export type Note = {
   id: string;
@@ -78,6 +84,17 @@ export default function App() {
   const trashRef = useRef<HTMLDivElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const bgImageInputRef = useRef<HTMLInputElement>(null);
+  const settingsPanelRef = useRef<HTMLDivElement>(null);
+  const settingsBtnRef = useRef<HTMLButtonElement>(null);
+  const customBgUrlRef = useRef<string | null>(null);
+
+  const [notePalette, setNotePalette] = useState<string[]>(() => [...DEFAULT_NOTE_PALETTE]);
+  const [wireColor, setWireColor] = useState(DEFAULT_WIRE_STROKE);
+  const [wirePreviewColor, setWirePreviewColor] = useState(DEFAULT_WIRE_PREVIEW);
+  const [customBackgroundUrl, setCustomBackgroundUrl] = useState<string | null>(null);
+  const [starsOnCustomBg, setStarsOnCustomBg] = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const [notes, setNotes] = useState<Note[]>(() => [
     {
@@ -111,6 +128,83 @@ export default function App() {
   const [currentTrackIndex, setCurrentTrackIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const trackUrlsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    function onPointerDown(ev: MouseEvent) {
+      if (!settingsOpen) return;
+      const t = ev.target as Node;
+      if (
+        settingsPanelRef.current?.contains(t) ||
+        settingsBtnRef.current?.contains(t)
+      ) {
+        return;
+      }
+      setSettingsOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [settingsOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (customBgUrlRef.current) {
+        URL.revokeObjectURL(customBgUrlRef.current);
+        customBgUrlRef.current = null;
+      }
+    };
+  }, []);
+
+  const setCustomBackgroundFromFile = (file: File | undefined) => {
+    if (!file || !file.type.startsWith("image/")) return;
+    if (customBgUrlRef.current) {
+      URL.revokeObjectURL(customBgUrlRef.current);
+      customBgUrlRef.current = null;
+    }
+    const url = URL.createObjectURL(file);
+    customBgUrlRef.current = url;
+    setCustomBackgroundUrl(url);
+  };
+
+  const clearCustomBackground = () => {
+    if (customBgUrlRef.current) {
+      URL.revokeObjectURL(customBgUrlRef.current);
+      customBgUrlRef.current = null;
+    }
+    setCustomBackgroundUrl(null);
+    if (bgImageInputRef.current) bgImageInputRef.current.value = "";
+  };
+
+  const updatePaletteColorAt = (index: number, hex: string) => {
+    setNotePalette((prev) => prev.map((c, i) => (i === index ? hex : c)));
+  };
+
+  const addPaletteColor = () => {
+    setNotePalette((prev) => [...prev, "#fef3c7"]);
+  };
+
+  const removePaletteColor = (index: number) => {
+    setNotePalette((prev) => {
+      if (prev.length <= MIN_PALETTE_SIZE) return prev;
+      const next = prev.filter((_, i) => i !== index);
+      const reindex = (note: Note) => {
+        let ci = note.colorIndex;
+        if (ci === index) ci = Math.min(index, next.length - 1);
+        else if (ci > index) ci -= 1;
+        return { ...note, colorIndex: ci };
+      };
+      setNotes((n) => n.map(reindex));
+      setTrashedNotes((n) => n.map(reindex));
+      return next;
+    });
+  };
+
+  const resetAppearanceDefaults = () => {
+    setNotePalette([...DEFAULT_NOTE_PALETTE]);
+    setWireColor(DEFAULT_WIRE_STROKE);
+    setWirePreviewColor(DEFAULT_WIRE_PREVIEW);
+    clearCustomBackground();
+    setStarsOnCustomBg(true);
+  };
 
   const noteMap = useMemo(() => new Map(notes.map((n) => [n.id, n])), [notes]);
 
@@ -231,7 +325,7 @@ export default function App() {
         x: 80 + (prev.length % 5) * 40,
         y: 80 + (prev.length % 3) * 50,
         text: "",
-        colorIndex: prev.length % NOTE_COLORS.length,
+        colorIndex: prev.length % notePalette.length,
       },
     ]);
   };
@@ -256,6 +350,8 @@ export default function App() {
           d={curvePath(x1, y1, x2, y2)}
           className="wire"
           fill="none"
+          stroke={wireColor}
+          strokeOpacity={0.72}
         />
       );
     }
@@ -266,11 +362,13 @@ export default function App() {
           d={curvePath(wirePreview.x1, wirePreview.y1, wirePreview.x2, wirePreview.y2)}
           className="wire wire-preview"
           fill="none"
+          stroke={wirePreviewColor}
+          strokeOpacity={0.92}
         />
       );
     }
     return list;
-  }, [connections, noteMap, wirePreview]);
+  }, [connections, noteMap, wirePreview, wireColor, wirePreviewColor]);
 
   const currentTrack = tracks[currentTrackIndex];
 
@@ -346,9 +444,26 @@ export default function App() {
     setNotes((prev) => [...prev, note]);
   };
 
+  const showStarOverlay = !customBackgroundUrl || starsOnCustomBg;
+
   return (
     <div className="app">
       <div className="board" ref={boardRef}>
+        <div className="board-backdrop" aria-hidden>
+          {customBackgroundUrl && (
+            <div
+              className="board-custom-bg"
+              style={{ backgroundImage: `url(${customBackgroundUrl})` }}
+            />
+          )}
+          <div className={`board-night-fall ${customBackgroundUrl ? "has-image" : ""}`} />
+          <div className={`board-stars-layer ${showStarOverlay ? "stars-on" : "stars-off"}`}>
+            <div className="board-stars board-stars-a" />
+            <div className="board-stars board-stars-b" />
+          </div>
+          <div className="board-vignette" />
+        </div>
+
         <svg className="wire-layer" aria-hidden>
           {wireElements}
         </svg>
@@ -361,7 +476,7 @@ export default function App() {
             style={{
               left: note.x,
               top: note.y,
-              backgroundColor: NOTE_COLORS[note.colorIndex % NOTE_COLORS.length],
+              backgroundColor: notePalette[note.colorIndex % notePalette.length],
               zIndex: draggingId === note.id ? 20 : 10,
               transform: `rotate(${idx % 2 === 0 ? -0.8 : 0.6}deg)`,
             }}
@@ -397,9 +512,129 @@ export default function App() {
         ))}
 
         <div className="toolbar-left">
-          <button type="button" className="btn primary" onClick={addNote}>
-            + New note
-          </button>
+          <input
+            ref={bgImageInputRef}
+            type="file"
+            accept="image/*"
+            className="sr-only"
+            onChange={(e) => {
+              setCustomBackgroundFromFile(e.target.files?.[0]);
+              e.target.value = "";
+            }}
+          />
+          <div className="toolbar-buttons">
+            <button
+              type="button"
+              ref={settingsBtnRef}
+              className={`btn ghost settings-trigger ${settingsOpen ? "active" : ""}`}
+              aria-expanded={settingsOpen}
+              aria-controls="appearance-panel"
+              onClick={() => setSettingsOpen((o) => !o)}
+            >
+              ⚙ Appearance
+            </button>
+            <button type="button" className="btn primary" onClick={addNote}>
+              + New note
+            </button>
+          </div>
+          {settingsOpen && (
+            <div
+              id="appearance-panel"
+              ref={settingsPanelRef}
+              className="settings-panel"
+              role="region"
+              aria-label="Appearance settings"
+            >
+              <h3 className="settings-heading">Post-it colors</h3>
+              <p className="settings-desc">New notes cycle through this palette. Edit or add swatches.</p>
+              <ul className="palette-editor">
+                {notePalette.map((c, idx) => (
+                  <li key={idx} className="palette-editor-row">
+                    <label className="sr-only" htmlFor={`palette-${idx}`}>
+                      Color {idx + 1}
+                    </label>
+                    <input
+                      id={`palette-${idx}`}
+                      type="color"
+                      className="color-swatch-input"
+                      value={/^#[0-9a-fA-F]{6}$/.test(c) ? c : "#ffffff"}
+                      onChange={(e) => updatePaletteColorAt(idx, e.target.value)}
+                    />
+                    <span className="palette-hex mono">{/^#[0-9a-fA-F]{6}$/.test(c) ? c : "#…"}</span>
+                    <button
+                      type="button"
+                      className="btn small btn-remove-swatch"
+                      disabled={notePalette.length <= MIN_PALETTE_SIZE}
+                      onClick={() => removePaletteColor(idx)}
+                      title={
+                        notePalette.length <= MIN_PALETTE_SIZE
+                          ? `Keep at least ${MIN_PALETTE_SIZE} colors`
+                          : "Remove swatch"
+                      }
+                    >
+                      Remove
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <button type="button" className="btn ghost settings-row-btn" onClick={addPaletteColor}>
+                + Add color
+              </button>
+
+              <h3 className="settings-heading">Connection wires</h3>
+              <div className="settings-row-two">
+                <label className="color-field">
+                  <span>Wires</span>
+                  <input
+                    type="color"
+                    value={wireColor}
+                    onChange={(e) => setWireColor(e.target.value)}
+                  />
+                </label>
+                <label className="color-field">
+                  <span>While linking</span>
+                  <input
+                    type="color"
+                    value={wirePreviewColor}
+                    onChange={(e) => setWirePreviewColor(e.target.value)}
+                  />
+                </label>
+              </div>
+
+              <h3 className="settings-heading">Background</h3>
+              <p className="settings-desc">
+                Choose a sky full of stars, or add your own image (&ldquo;cover&rdquo; style).
+              </p>
+              <div className="settings-bg-actions">
+                <button type="button" className="btn ghost" onClick={() => bgImageInputRef.current?.click()}>
+                  Upload image…
+                </button>
+                <button
+                  type="button"
+                  className="btn ghost"
+                  disabled={!customBackgroundUrl}
+                  onClick={clearCustomBackground}
+                >
+                  Remove image
+                </button>
+              </div>
+              <label className="settings-checkbox">
+                <input
+                  type="checkbox"
+                  checked={starsOnCustomBg}
+                  disabled={!customBackgroundUrl}
+                  onChange={(e) => setStarsOnCustomBg(e.target.checked)}
+                />
+                <span>Show star overlay on custom image</span>
+              </label>
+
+              <div className="settings-footer">
+                <button type="button" className="btn small" onClick={resetAppearanceDefaults}>
+                  Reset defaults
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -494,7 +729,9 @@ export default function App() {
                   <li key={n.id} className="trash-item">
                     <span
                       className="trash-swatch"
-                      style={{ backgroundColor: NOTE_COLORS[n.colorIndex % NOTE_COLORS.length] }}
+                      style={{
+                        backgroundColor: notePalette[n.colorIndex % notePalette.length],
+                      }}
                     />
                     <span className="trash-snippet">{n.text.trim() || "(empty note)"}</span>
                     <button type="button" className="btn small" onClick={() => restoreNote(n)}>
