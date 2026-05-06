@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { parseBlob } from "music-metadata";
 import { startBellRepeats, stopBell } from "./bellRepeats";
 import "./App.css";
@@ -7,6 +7,17 @@ import "./App.css";
 const NOTE_W = 200;
 /** Approx. vertical midpoint for wires (sticky + timer row). */
 const NOTE_H = 172;
+
+/** Default note box; optional per-note overrides on `Note`. */
+function noteBox(note: Pick<Note, "width" | "height">): { w: number; h: number } {
+  return { w: note.width ?? NOTE_W, h: note.height ?? NOTE_H };
+}
+
+const NOTE_SIZE_PRESETS = [
+  { label: "Small", w: 160, h: 138 },
+  { label: "Medium", w: NOTE_W, h: NOTE_H },
+  { label: "Large", w: 250, h: 215 },
+] as const;
 
 /**
  * Shared world plane (px) for wallpaper + SVG. Same coordinate space as note `left/top`.
@@ -37,6 +48,10 @@ export type Note = {
   y: number;
   text: string;
   colorIndex: number;
+  /** Board width in px; defaults to app default note width. */
+  width?: number;
+  /** Board height basis (min-height + wire anchor); defaults to app default. */
+  height?: number;
   /** Wall-clock time when the countdown reaches zero */
   timerEndMs: number | null;
   /** True after the deadline until the user responds (finished / extend) */
@@ -56,6 +71,10 @@ type Connection = {
   toId: string;
 };
 
+type BoardContextMenuState =
+  | { kind: "board"; clientX: number; clientY: number; boardX: number; boardY: number }
+  | { kind: "note"; clientX: number; clientY: number; boardX: number; boardY: number; noteId: string };
+
 type Track = {
   id: string;
   url: string;
@@ -66,6 +85,12 @@ type Track = {
 
 function uid() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function noteSnippet(note: Note): string {
+  const t = note.text.trim().replace(/\s+/g, " ");
+  if (!t) return "(empty note)";
+  return t.length > 48 ? `${t.slice(0, 46)}…` : t;
 }
 
 /** Reads embedded tags when available; falls back to "Artist - Title" from the filename. */
@@ -277,6 +302,9 @@ export default function App() {
   const [wirePreview, setWirePreview] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(
     null
   );
+
+  const contextMenuRef = useRef<HTMLDivElement>(null);
+  const [contextMenu, setContextMenu] = useState<BoardContextMenuState | null>(null);
 
   const [tracks, setTracks] = useState<Track[]>([]);
   const [currentTrackIndex, setCurrentTrackIndex] = useState(0);
@@ -517,6 +545,24 @@ export default function App() {
     return null;
   }, []);
 
+  const moveNoteToTrash = useCallback((note: Note, restore?: { restoreX: number; restoreY: number }) => {
+    const x = restore?.restoreX ?? note.x;
+    const y = restore?.restoreY ?? note.y;
+    stopBell(note.id);
+    setNotes((prev) => prev.filter((n) => n.id !== note.id));
+    setConnections((prev) => prev.filter((c) => c.fromId !== note.id && c.toId !== note.id));
+    setTrashedNotes((prev) => [
+      ...prev,
+      {
+        ...note,
+        x,
+        y,
+        timerEndMs: null,
+        timerRinging: false,
+      },
+    ]);
+  }, []);
+
   const startDragNote = (e: React.PointerEvent, note: Note) => {
     if (e.button !== 0) return;
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -553,21 +599,9 @@ export default function App() {
     if (noteDragAnchorRef.current?.noteId === note.id) noteDragAnchorRef.current = null;
     setTrashDropHighlight(false);
     if (isOverTrash(e.clientX, e.clientY)) {
-      stopBell(note.id);
       const x = anchor?.x ?? note.x;
       const y = anchor?.y ?? note.y;
-      setNotes((prev) => prev.filter((n) => n.id !== note.id));
-      setConnections((prev) => prev.filter((c) => c.fromId !== note.id && c.toId !== note.id));
-      setTrashedNotes((prev) => [
-        ...prev,
-        {
-          ...note,
-          x,
-          y,
-          timerEndMs: null,
-          timerRinging: false,
-        },
-      ]);
+      moveNoteToTrash(note, { restoreX: x, restoreY: y });
     }
     draggingNoteIdRef.current = null;
     setDraggingId(null);
@@ -578,8 +612,9 @@ export default function App() {
     if (e.button !== 0) return;
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
     const p = boardPoint(e.clientX, e.clientY);
-    const x1 = note.x + NOTE_W;
-    const y1 = note.y + NOTE_H / 2;
+    const { w, h } = noteBox(note);
+    const x1 = note.x + w;
+    const y1 = note.y + h / 2;
     setConnectFrom(note.id);
     setWirePreview({ x1, y1, x2: p.x, y2: p.y });
   };
@@ -589,9 +624,10 @@ export default function App() {
     const p = boardPoint(e.clientX, e.clientY);
     const from = noteMap.get(connectFrom);
     if (!from) return;
+    const { w, h } = noteBox(from);
     setWirePreview({
-      x1: from.x + NOTE_W,
-      y1: from.y + NOTE_H / 2,
+      x1: from.x + w,
+      y1: from.y + h / 2,
       x2: p.x,
       y2: p.y,
     });
@@ -620,16 +656,32 @@ export default function App() {
     setWirePreview(null);
   };
 
-  const addNote = () => {
+  const linkNotes = useCallback((fromId: string, toId: string) => {
+    if (fromId === toId) return;
+    setConnections((prev) => {
+      const exists = prev.some(
+        (c) =>
+          (c.fromId === fromId && c.toId === toId) ||
+          (c.fromId === toId && c.toId === fromId)
+      );
+      if (exists) return prev;
+      return [...prev, { id: uid(), fromId, toId }];
+    });
+  }, []);
+
+  const addNote = useCallback((atBoard?: { x: number; y: number }) => {
     setNotes((prev) => {
       const shell = boardRef.current;
       let x = 120 + (prev.length % 5) * 40;
       let y = 100 + (prev.length % 3) * 48;
-      if (shell) {
+      if (atBoard) {
+        x = Math.round(atBoard.x - NOTE_W / 2);
+        y = Math.round(atBoard.y - NOTE_H / 3);
+      } else if (shell) {
         const br = shell.getBoundingClientRect();
         const center = boardPoint(br.left + br.width / 2, br.top + br.height / 2);
         x = Math.round(center.x - NOTE_W / 2 + (prev.length % 7) * 12);
-        y = Math.round(center.y - NOTE_H / 3 + ((prev.length % 4) * 14));
+        y = Math.round(center.y - NOTE_H / 3 + (prev.length % 4) * 14);
       }
       return [
         ...prev,
@@ -638,6 +690,8 @@ export default function App() {
           x,
           y,
           text: "",
+          width: NOTE_W,
+          height: NOTE_H,
           colorIndex: prev.length % notePalette.length,
           timerEndMs: null,
           timerRinging: false,
@@ -645,7 +699,7 @@ export default function App() {
         },
       ];
     });
-  };
+  }, [boardPoint, notePalette]);
 
   const updateNoteText = (id: string, text: string) => {
     setNotes((prev) => prev.map((n) => (n.id === id ? { ...n, text } : n)));
@@ -657,10 +711,12 @@ export default function App() {
       const a = noteMap.get(c.fromId);
       const b = noteMap.get(c.toId);
       if (!a || !b) continue;
-      const x1 = a.x + NOTE_W;
-      const y1 = a.y + NOTE_H / 2;
+      const ab = noteBox(a);
+      const bb = noteBox(b);
+      const x1 = a.x + ab.w;
+      const y1 = a.y + ab.h / 2;
       const x2 = b.x;
-      const y2 = b.y + NOTE_H / 2;
+      const y2 = b.y + bb.h / 2;
       list.push(
         <path
           key={c.id}
@@ -761,6 +817,80 @@ export default function App() {
     setNotes((prev) => [...prev, note]);
   };
 
+  const onBoardShellContextMenu = useCallback(
+    (e: React.MouseEvent) => {
+      const t = e.target as HTMLElement;
+      if (timerDialog) return;
+      if (t.closest(".toolbar-left") || t.closest(".board-bottom-left-stack")) return;
+      e.preventDefault();
+      const p = boardPoint(e.clientX, e.clientY);
+      const row = t.closest("[data-note-id]");
+      if (row) {
+        const noteId = row.getAttribute("data-note-id");
+        if (noteId) {
+          setContextMenu({
+            kind: "note",
+            clientX: e.clientX,
+            clientY: e.clientY,
+            boardX: p.x,
+            boardY: p.y,
+            noteId,
+          });
+        }
+      } else {
+        setContextMenu({
+          kind: "board",
+          clientX: e.clientX,
+          clientY: e.clientY,
+          boardX: p.x,
+          boardY: p.y,
+        });
+      }
+    },
+    [boardPoint, timerDialog]
+  );
+
+  useLayoutEffect(() => {
+    if (!contextMenu) return;
+    const el = contextMenuRef.current;
+    if (!el) return;
+    const pad = 8;
+    const rect = el.getBoundingClientRect();
+    let left = contextMenu.clientX;
+    let top = contextMenu.clientY;
+    if (left + rect.width > window.innerWidth - pad) left = window.innerWidth - rect.width - pad;
+    if (top + rect.height > window.innerHeight - pad) top = window.innerHeight - rect.height - pad;
+    left = Math.max(pad, left);
+    top = Math.max(pad, top);
+    el.style.left = `${left}px`;
+    el.style.top = `${top}px`;
+  }, [contextMenu, notes.length]);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const onDown = (ev: MouseEvent) => {
+      const menu = contextMenuRef.current;
+      if (menu && ev.target instanceof Node && menu.contains(ev.target)) return;
+      setContextMenu(null);
+    };
+    document.addEventListener("mousedown", onDown, true);
+    return () => document.removeEventListener("mousedown", onDown, true);
+  }, [contextMenu]);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape") setContextMenu(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [contextMenu]);
+
+  useEffect(() => {
+    if (!contextMenu || contextMenu.kind !== "note") return;
+    if (!notes.some((n) => n.id === contextMenu.noteId)) setContextMenu(null);
+  }, [contextMenu, notes]);
+
   const timerDialogNote = useMemo(
     () => (timerDialog ? notes.find((n) => n.id === timerDialog.noteId) : undefined),
     [notes, timerDialog],
@@ -855,6 +985,7 @@ export default function App() {
         id="board-shell"
         className="board board-shell"
         ref={boardRef}
+        onContextMenu={onBoardShellContextMenu}
         onPointerDown={onBoardShellPointerDown}
         onPointerMove={onBoardShellPointerMove}
         onPointerUp={onBoardShellPointerEnd}
@@ -912,7 +1043,9 @@ export default function App() {
             {wireElements}
           </svg>
 
-          {notes.map((note, idx) => (
+          {notes.map((note, idx) => {
+            const nb = noteBox(note);
+            return (
           <article
             key={note.id}
             className={`note${note.taskDone ? " note--done" : ""}${note.timerRinging ? " note--timer-ringing" : ""}`}
@@ -920,6 +1053,8 @@ export default function App() {
             style={{
               left: note.x,
               top: note.y,
+              width: nb.w,
+              minHeight: nb.h,
               backgroundColor: notePalette[note.colorIndex % notePalette.length],
               zIndex: draggingId === note.id ? 20 : 10,
               transform: `rotate(${idx % 2 === 0 ? -0.8 : 0.6}deg)`,
@@ -977,7 +1112,8 @@ export default function App() {
               onPointerCancel={endConnect}
             />
           </article>
-        ))}
+            );
+          })}
         </div>
 
         <div className="board-bottom-left-stack">
@@ -1030,7 +1166,7 @@ export default function App() {
             >
               ⚙ Appearance
             </button>
-            <button type="button" className="btn primary" onClick={addNote}>
+            <button type="button" className="btn primary" onClick={() => addNote()}>
               + New note
             </button>
           </div>
@@ -1341,6 +1477,122 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {contextMenu &&
+        (() => {
+          const cn = contextMenu.kind === "note" ? notes.find((n) => n.id === contextMenu.noteId) : null;
+          if (contextMenu.kind === "note" && !cn) return null;
+          return (
+        <div
+          ref={contextMenuRef}
+          className="board-context-menu"
+          role="menu"
+          aria-label="Board and note actions"
+          style={{ position: "fixed", left: contextMenu.clientX, top: contextMenu.clientY, zIndex: 70 }}
+          onWheel={(ev) => ev.stopPropagation()}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            className="board-context-menu__item"
+            onClick={() => {
+              addNote({ x: contextMenu.boardX, y: contextMenu.boardY });
+              setContextMenu(null);
+            }}
+          >
+            New note here
+          </button>
+
+          {contextMenu.kind === "note" && cn ? (
+            <>
+              <hr className="board-context-menu__sep" />
+              <p className="board-context-menu__label">Color</p>
+              <div className="board-context-menu__swatches" role="group" aria-label="Note color">
+                {notePalette.map((color, i) => (
+                  <button
+                    key={`cm-${cn.id}-${i}-${color}`}
+                    type="button"
+                    role="menuitem"
+                    className={`board-context-menu__swatch${cn.colorIndex % notePalette.length === i ? " is-current" : ""}`}
+                    style={{ backgroundColor: /^#[0-9a-fA-F]{6}$/.test(color) ? color : "#ccc" }}
+                    title={`Palette ${i + 1}`}
+                    aria-label={`Use color ${i + 1}`}
+                    onClick={() => {
+                      setNotes((prev) =>
+                        prev.map((n) => (n.id === cn.id ? { ...n, colorIndex: i } : n)),
+                      );
+                      setContextMenu(null);
+                    }}
+                  />
+                ))}
+              </div>
+
+              <p className="board-context-menu__label">Size</p>
+              <div className="board-context-menu__size-row" role="group" aria-label="Note size">
+                {NOTE_SIZE_PRESETS.map((p) => {
+                  const { w: cw, h: ch } = noteBox(cn);
+                  const matches = cw === p.w && ch === p.h;
+                  return (
+                    <button
+                      key={p.label}
+                      type="button"
+                      role="menuitem"
+                      className={`board-context-menu__size-btn${matches ? " is-current" : ""}`}
+                      onClick={() => {
+                        setNotes((prev) =>
+                          prev.map((n) => (n.id === cn.id ? { ...n, width: p.w, height: p.h } : n)),
+                        );
+                        setContextMenu(null);
+                      }}
+                    >
+                      {p.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <button
+                type="button"
+                role="menuitem"
+                className="board-context-menu__item board-context-menu__item--danger"
+                onClick={() => {
+                  moveNoteToTrash(cn);
+                  setContextMenu(null);
+                }}
+              >
+                Move note to trash
+              </button>
+
+              <hr className="board-context-menu__sep" />
+              <p className="board-context-menu__label">Connect to</p>
+              <ul className="board-context-menu__link-list" role="group" aria-label="Link to another note">
+                {notes.filter((n) => n.id !== cn.id).length === 0 ? (
+                  <li className="board-context-menu__muted">No other notes to link.</li>
+                ) : (
+                  notes
+                    .filter((n) => n.id !== cn.id)
+                    .map((n) => (
+                      <li key={n.id}>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="board-context-menu__link-item"
+                          onClick={() => {
+                            linkNotes(cn.id, n.id);
+                            setContextMenu(null);
+                          }}
+                        >
+                          {noteSnippet(n)}
+                        </button>
+                      </li>
+                    ))
+                )}
+              </ul>
+            </>
+          ) : null}
+        </div>
+          );
+        })()}
 
       <button
         type="button"

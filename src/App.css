@@ -1000,6 +1000,141 @@
   transform: scale(1.06);
 }
 
+.board-context-menu {
+  min-width: 220px;
+  max-width: min(300px, calc(100vw - 16px));
+  padding: 6px 0;
+  margin: 0;
+  border-radius: 12px;
+  background: #12151c;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow:
+    0 12px 40px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(0, 0, 0, 0.2);
+  color: #eef1f8;
+}
+
+.board-context-menu__item {
+  display: flex;
+  width: calc(100% - 16px);
+  margin: 0 8px;
+  padding: 9px 12px;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+
+.board-context-menu__item:hover,
+.board-context-menu__link-item:hover,
+.board-context-menu__size-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.board-context-menu__item--danger:hover {
+  background: rgba(220, 80, 80, 0.22);
+}
+
+.board-context-menu__sep {
+  margin: 6px 10px;
+  border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.board-context-menu__label {
+  margin: 4px 16px 6px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.55;
+}
+
+.board-context-menu__swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 14px 8px;
+}
+
+.board-context-menu__swatch {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.board-context-menu__swatch.is-current {
+  box-shadow: 0 0 0 2px rgba(255, 220, 140, 0.85);
+  border-color: rgba(0, 0, 0, 0.2);
+}
+
+.board-context-menu__size-row {
+  display: flex;
+  gap: 6px;
+  padding: 0 14px 10px;
+  flex-wrap: wrap;
+}
+
+.board-context-menu__size-btn {
+  flex: 1;
+  min-width: 72px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.board-context-menu__size-btn.is-current {
+  border-color: rgba(255, 215, 150, 0.55);
+  background: rgba(255, 200, 120, 0.12);
+}
+
+.board-context-menu__link-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 8px 10px;
+  max-height: 200px;
+  overflow: auto;
+}
+
+.board-context-menu__link-item {
+  display: flex;
+  width: 100%;
+  margin: 0;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.board-context-menu__muted {
+  margin: 8px 10px;
+  font-size: 0.82rem;
+  opacity: 0.55;
+  font-style: italic;
+}
+
 .trash-icon {
   display: block;
   font-size: 1.75rem;
